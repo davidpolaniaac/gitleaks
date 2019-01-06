@@ -507,8 +507,62 @@ func auditGitRepo(repo *RepoDescriptor) ([]Leak, error) {
 
 // auditObjects only inspects git objects. Tends to be faster for larger repos. Audit does not include
 // any information about commit, only git object contents.
-func auditObjects(repo *RepoDescriptor) {
+func auditObjects(repo *RepoDescriptor) ([]Leak, error) {
+	var (
+		err         error
+		repoName    string
+		leaks       []Leak
+		commitCount int
+		commitWg    sync.WaitGroup
+		mutex       = &sync.Mutex{}
+		semaphore   chan bool
+	)
 
+	semaphore = make(chan bool, threads)
+	now := time.Now()
+	bIter, err := repo.repository.BlobObjects()
+	if err != nil {
+		return leaks, nil
+	}
+	err = bIter.ForEach(func(b *object.Blob) error {
+		commitWg.Add(1)
+		semaphore <- true
+		go func(b *object.Blob) {
+			defer func() {
+				commitWg.Done()
+				<-semaphore
+				if r := recover(); r != nil {
+					log.Warnf("recoverying from panic on commit %s, likely large diff causing panic", b.Hash.String())
+				}
+			}()
+			reader, err := b.Reader()
+			if err != nil {
+				return
+			}
+			defer gioutil.CheckClose(reader, &err)
+
+			buf := new(bytes.Buffer)
+			if _, err := buf.ReadFrom(reader); err != nil {
+				return
+			}
+			contents := buf.String()
+			diff := gitDiff{
+				repoName:   "some shit",
+				filePath:   "meh?",
+				content:    contents,
+				sha:        b.Hash.String(),
+				author:     "nope",
+				message:    "meh",
+			}
+			bLeaks := inspect(diff)
+			for _, leak := range bLeaks {
+				mutex.Lock()
+				blobLookup[b.Hash.String()] = &leak
+				mutex.Unlock()
+			}
+		}(b)
+		return nil
+	})
 }
 
 // externalConfig will attempt to load a pinned ".gitleaks.toml" configuration file
