@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/csv"
 	"encoding/json"
@@ -21,7 +22,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flier/gohs/hyperscan"
+
 	"gopkg.in/src-d/go-git.v4/plumbing"
+	gioutil "gopkg.in/src-d/go-git.v4/utils/ioutil"
 
 	diffType "gopkg.in/src-d/go-git.v4/plumbing/format/diff"
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
@@ -226,6 +230,7 @@ var (
 	totalCommits      int64
 	commitMap         = make(map[string]bool)
 	cMutex            = &sync.Mutex{}
+	patterns          []*hyperscan.Pattern
 )
 
 func init() {
@@ -482,7 +487,7 @@ func auditGitRepo(repo *RepoDescriptor) ([]Leak, error) {
 
 	// if we are running in fast mode, just check all objects. ignore commits
 	if opts.Fast {
-		repo.repository.Objects
+		return auditObjects(repo)
 	}
 
 	// clear commit cache
@@ -505,21 +510,44 @@ func auditGitRepo(repo *RepoDescriptor) ([]Leak, error) {
 	return leaks, err
 }
 
+func eventHandler(id uint, from, to uint64, flags uint, context interface{}) error {
+	inputData := context.([]byte)
+
+	start := bytes.LastIndexByte(inputData[:from], '\n')
+	end := int(to) + bytes.IndexByte(inputData[to:], '\n')
+
+	if start == -1 {
+		start = 0
+	} else {
+		start = start + 1
+	}
+
+	if end == -1 {
+		end = len(inputData)
+	}
+
+	//fmt.Printf("%s\n", inputData)
+
+	return nil
+}
+
 // auditObjects only inspects git objects. Tends to be faster for larger repos. Audit does not include
 // any information about commit, only git object contents.
 func auditObjects(repo *RepoDescriptor) ([]Leak, error) {
 	var (
-		err         error
-		repoName    string
-		leaks       []Leak
-		commitCount int
-		commitWg    sync.WaitGroup
-		mutex       = &sync.Mutex{}
-		semaphore   chan bool
+		err       error
+		leaks     []Leak
+		commitWg  sync.WaitGroup
+		mutex     = &sync.Mutex{}
+		semaphore chan bool
+		// blobLookup = make(map[string]bool)
 	)
 
+	// setup hyperscan database
+	bdb, err := hyperscan.NewBlockDatabase(patterns...)
+
 	semaphore = make(chan bool, threads)
-	now := time.Now()
+	scratch, err := hyperscan.NewScratch(bdb)
 	bIter, err := repo.repository.BlobObjects()
 	if err != nil {
 		return leaks, nil
@@ -540,29 +568,39 @@ func auditObjects(repo *RepoDescriptor) ([]Leak, error) {
 				return
 			}
 			defer gioutil.CheckClose(reader, &err)
-
 			buf := new(bytes.Buffer)
 			if _, err := buf.ReadFrom(reader); err != nil {
 				return
 			}
-			contents := buf.String()
-			diff := gitDiff{
-				repoName:   "some shit",
-				filePath:   "meh?",
-				content:    contents,
-				sha:        b.Hash.String(),
-				author:     "nope",
-				message:    "meh",
+			// contents := buf.String()
+			//fmt.Println(buf.Bytes())
+			if len(buf.Bytes()) == 0 {
+				return
 			}
-			bLeaks := inspect(diff)
-			for _, leak := range bLeaks {
-				mutex.Lock()
-				blobLookup[b.Hash.String()] = &leak
-				mutex.Unlock()
+			mutex.Lock()
+			if err := bdb.Scan(buf.Bytes(), scratch, eventHandler, buf.Bytes()); err != nil {
+				fmt.Println(err)
+				fmt.Fprint(os.Stderr, "ERROR: Unable to scan input buffer. Exiting.\n")
+				os.Exit(-1)
 			}
+			mutex.Unlock()
+
+			// diff := gitDiff{
+			// 	repoName: "some shit",
+			// 	filePath: "meh?",
+			// 	content:  contents,
+			// 	sha:      b.Hash.String(),
+			// 	author:   "nope",
+			// 	message:  "meh",
+			// }
+			// log.Debug(b.ID())
+			// bLeaks := inspect(diff)
+			// leaks = append(leaks, bLeaks...)
+			// mutex.Unlock()
 		}(b)
 		return nil
 	})
+	return leaks, nil
 }
 
 // externalConfig will attempt to load a pinned ".gitleaks.toml" configuration file
@@ -1030,6 +1068,16 @@ func loadToml() error {
 
 // updateConfig will update a the global config values
 func updateConfig(config Config) error {
+	// setup hyperscan patterns
+	if opts.Fast {
+		for _, pat := range config.Regexes {
+			pattern, err := hyperscan.ParsePattern(pat.Regex)
+			if err != nil {
+				fmt.Printf("can use %s as regex for hyperscan\n", pat.Regex)
+			}
+			patterns = append(patterns, pattern)
+		}
+	}
 	if len(config.Misc.Entropy) != 0 {
 		err := entropyLimits(config.Misc.Entropy)
 		if err != nil {
