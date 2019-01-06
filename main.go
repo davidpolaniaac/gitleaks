@@ -87,6 +87,7 @@ type Options struct {
 	Entropy        float64 `long:"entropy" short:"e" description:"Include entropy checks during audit. Entropy scale: 0.0(no entropy) - 8.0(max entropy)"`
 	NoiseReduction bool    `long:"noise-reduction" description:"Reduce the number of finds when entropy checks are enabled"`
 	RepoConfig     bool    `long:"repo-config" description:"Load config from target repo. Config file must be \".gitleaks.toml\""`
+	Fast           bool    `long:"fast" description:"fast and dumb"`
 	// TODO: IncludeMessages  string `long:"messages" description:"include commit messages in audit"`
 
 	// Output options
@@ -479,6 +480,11 @@ func auditGitRepo(repo *RepoDescriptor) ([]Leak, error) {
 		}
 	}
 
+	// if we are running in fast mode, just check all objects. ignore commits
+	if opts.Fast {
+		repo.repository.Objects
+	}
+
 	// clear commit cache
 	commitMap = make(map[string]bool)
 
@@ -497,6 +503,12 @@ func auditGitRepo(repo *RepoDescriptor) ([]Leak, error) {
 		return nil
 	})
 	return leaks, err
+}
+
+// auditObjects only inspects git objects. Tends to be faster for larger repos. Audit does not include
+// any information about commit, only git object contents.
+func auditObjects(repo *RepoDescriptor) {
+
 }
 
 // externalConfig will attempt to load a pinned ".gitleaks.toml" configuration file
