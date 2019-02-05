@@ -35,9 +35,9 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/google/go-github/github"
 	"github.com/hako/durafmt"
-	"github.com/jessevdk/go-flags"
+	flags "github.com/jessevdk/go-flags"
 	log "github.com/sirupsen/logrus"
-	"gopkg.in/src-d/go-git.v4"
+	git "gopkg.in/src-d/go-git.v4"
 )
 
 // Leak represents a leaked secret or regex match.
@@ -138,6 +138,12 @@ type gitDiff struct {
 type entropyRange struct {
 	v1 float64
 	v2 float64
+}
+
+type objCtx struct {
+	buf  []byte
+	id   string
+	name string
 }
 
 const defaultGithubURL = "https://api.github.com/"
@@ -510,23 +516,25 @@ func auditGitRepo(repo *RepoDescriptor) ([]Leak, error) {
 	return leaks, err
 }
 
-func eventHandler(id uint, from, to uint64, flags uint, context interface{}) error {
+func onMatch(id uint, from, to uint64, flags uint, context interface{}) error {
 	inputData := context.([]byte)
-
-	start := bytes.LastIndexByte(inputData[:from], '\n')
+	fmt.Printf("hash: %s\n", inputData[0:40])
 	end := int(to) + bytes.IndexByte(inputData[to:], '\n')
-
-	if start == -1 {
-		start = 0
-	} else {
-		start = start + 1
-	}
 
 	if end == -1 {
 		end = len(inputData)
 	}
 
-	//fmt.Printf("%s\n", inputData)
+	i := to
+
+	// find beginning of line
+	for {
+		i = i - 1
+		if inputData[i] == '\n' || i == 0 {
+			fmt.Printf("%s\n", inputData[i:end])
+			break
+		}
+	}
 
 	return nil
 }
@@ -540,7 +548,6 @@ func auditObjects(repo *RepoDescriptor) ([]Leak, error) {
 		commitWg  sync.WaitGroup
 		mutex     = &sync.Mutex{}
 		semaphore chan bool
-		// blobLookup = make(map[string]bool)
 	)
 
 	// setup hyperscan database
@@ -572,31 +579,20 @@ func auditObjects(repo *RepoDescriptor) ([]Leak, error) {
 			if _, err := buf.ReadFrom(reader); err != nil {
 				return
 			}
-			// contents := buf.String()
-			//fmt.Println(buf.Bytes())
 			if len(buf.Bytes()) == 0 {
 				return
 			}
+
+			// 40 char sha-1. grip this off the handler
+			ctx := []byte(b.ID().String())
+			ctx = append(ctx, buf.Bytes()...)
 			mutex.Lock()
-			if err := bdb.Scan(buf.Bytes(), scratch, eventHandler, buf.Bytes()); err != nil {
+			if err := bdb.Scan(buf.Bytes(), scratch, onMatch, ctx); err != nil {
 				fmt.Println(err)
 				fmt.Fprint(os.Stderr, "ERROR: Unable to scan input buffer. Exiting.\n")
 				os.Exit(-1)
 			}
 			mutex.Unlock()
-
-			// diff := gitDiff{
-			// 	repoName: "some shit",
-			// 	filePath: "meh?",
-			// 	content:  contents,
-			// 	sha:      b.Hash.String(),
-			// 	author:   "nope",
-			// 	message:  "meh",
-			// }
-			// log.Debug(b.ID())
-			// bLeaks := inspect(diff)
-			// leaks = append(leaks, bLeaks...)
-			// mutex.Unlock()
 		}(b)
 		return nil
 	})
