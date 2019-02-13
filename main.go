@@ -567,7 +567,7 @@ func auditObjects(repo *RepoDescriptor) ([]Leak, error) {
 				commitWg.Done()
 				<-semaphore
 				if r := recover(); r != nil {
-					log.Warnf("recoverying from panic on commit %s, likely large diff causing panic", b.Hash.String())
+					log.Warnf("recoverying from panic on object %s", b.Hash.String())
 				}
 			}()
 			reader, err := b.Reader()
