@@ -1,6 +1,7 @@
 package gitleaks
 
 import (
+	"bytes"
 	"crypto/md5"
 	"fmt"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
 	"gopkg.in/src-d/go-git.v4/plumbing/storer"
 	"gopkg.in/src-d/go-git.v4/storage/memory"
+	gioutil "gopkg.in/src-d/go-git.v4/utils/ioutil"
 )
 
 // Leak represents a leaked secret or regex match.
@@ -127,6 +129,18 @@ func (repoInfo *RepoInfo) audit() ([]Leak, error) {
 		}
 	}
 
+	if opts.Threads != 0 {
+		threads = opts.Threads
+	}
+	if opts.RepoPath != "" {
+		threads = 1
+	}
+	semaphore = make(chan bool, threads)
+
+	if opts.Blobs {
+		return repoInfo.auditBlobs(semaphore)
+	}
+
 	if opts.Branch != "" {
 		refs, err := repoInfo.repository.Storer.IterReferences()
 		if err != nil {
@@ -162,14 +176,6 @@ func (repoInfo *RepoInfo) audit() ([]Leak, error) {
 	if err != nil {
 		return leaks, nil
 	}
-
-	if opts.Threads != 0 {
-		threads = opts.Threads
-	}
-	if opts.RepoPath != "" {
-		threads = 1
-	}
-	semaphore = make(chan bool, threads)
 
 	err = cIter.ForEach(func(c *object.Commit) error {
 		if c == nil || (opts.Depth != 0 && commitCount == opts.Depth) {
@@ -248,7 +254,7 @@ func (repoInfo *RepoInfo) audit() ([]Leak, error) {
 					chunks := f.Chunks()
 					for _, chunk := range chunks {
 						if chunk.Type() == diffType.Add || chunk.Type() == diffType.Delete {
-							diff := commitInfo{
+							cInfo := commitInfo{
 								repoName: repoInfo.name,
 								filePath: filePath,
 								content:  chunk.Content(),
@@ -258,7 +264,7 @@ func (repoInfo *RepoInfo) audit() ([]Leak, error) {
 								message:  strings.Replace(c.Message, "\n", " ", -1),
 								date:     c.Author.When,
 							}
-							chunkLeaks := inspect(diff)
+							chunkLeaks := cInfo.inspect()
 							for _, leak := range chunkLeaks {
 								mutex.Lock()
 								leaks = append(leaks, leak)
@@ -300,7 +306,7 @@ func (repoInfo *RepoInfo) auditSingleCommit(c *object.Commit) []Leak {
 		if err != nil {
 			return nil
 		}
-		diff := commitInfo{
+		cInfo := commitInfo{
 			repoName: repoInfo.name,
 			filePath: f.Name,
 			content:  content,
@@ -310,11 +316,60 @@ func (repoInfo *RepoInfo) auditSingleCommit(c *object.Commit) []Leak {
 			message:  strings.Replace(c.Message, "\n", " ", -1),
 			date:     c.Author.When,
 		}
-		fileLeaks := inspect(diff)
+		fileLeaks := cInfo.inspect()
 		mutex.Lock()
 		leaks = append(leaks, fileLeaks...)
 		mutex.Unlock()
 		return nil
 	})
 	return leaks
+}
+
+func (repoInfo *RepoInfo) auditBlobs(semaphore chan bool) ([]Leak, error) {
+	var (
+		err    error
+		leaks  []Leak
+		blobWg sync.WaitGroup
+	)
+	bIter, err := repoInfo.repository.BlobObjects()
+	if err != nil {
+		return nil, err
+	}
+
+	err = bIter.ForEach(func(b *object.Blob) error {
+		// fmt.Println(b.Hash.String())
+		blobWg.Add(1)
+		semaphore <- true
+		go func(b *object.Blob) {
+			defer func() {
+				blobWg.Done()
+				<-semaphore
+				if r := recover(); r != nil {
+					log.Warnf("recovering from panic on blob %s, continuing", b.Hash.String())
+				}
+			}()
+			reader, err := b.Reader()
+			if err != nil {
+				return
+			}
+			defer gioutil.CheckClose(reader, &err)
+			buf := new(bytes.Buffer)
+			if _, err := buf.ReadFrom(reader); err != nil {
+				return
+			}
+			bInfo := blobInfo{
+				// repoName: repoInfo.name,
+				content: buf.String(),
+				hash:    b.Hash.String(),
+			}
+			blobLeaks := bInfo.inspect()
+			mutex.Lock()
+			leaks = append(leaks, blobLeaks...)
+			mutex.Unlock()
+
+		}(b)
+		return nil
+	})
+	blobWg.Wait()
+	return leaks, nil
 }

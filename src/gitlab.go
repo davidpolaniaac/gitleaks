@@ -6,8 +6,8 @@ import (
 	"os"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/xanzy/go-gitlab"
-	"gopkg.in/src-d/go-git.v4"
+	gitlab "github.com/xanzy/go-gitlab"
+	git "gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/storage/memory"
 )
 

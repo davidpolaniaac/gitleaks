@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jessevdk/go-flags"
+	flags "github.com/jessevdk/go-flags"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -46,6 +46,7 @@ type Options struct {
 	NoiseReduction bool    `long:"noise-reduction" description:"Reduce the number of finds when entropy checks are enabled"`
 	RepoConfig     bool    `long:"repo-config" description:"Load config from target repo. Config file must be \".gitleaks.toml\""`
 	Branch         string  `long:"branch" description:"Branch to audit"`
+	Blobs          bool    `long:"blobs" description:"Scan git blobs only"`
 	// TODO: IncludeMessages  string `long:"messages" description:"include commit messages in audit"`
 
 	// Output options

@@ -26,6 +26,11 @@ type commitInfo struct {
 	date     time.Time
 }
 
+type blobInfo struct {
+	content string
+	hash    string
+}
+
 // writeReport writes a report to a file specified in the --report= option.
 // Default format for report is JSON. You can use the --csv option to write the report as a csv
 func writeReport(leaks []Leak) error {
@@ -82,11 +87,53 @@ func writeReport(leaks []Leak) error {
 	return nil
 }
 
+func (blob *blobInfo) inspect() []Leak {
+	var (
+		leaks    []Leak
+		skipLine bool
+	)
+	lines := strings.Split(blob.content, "\n")
+
+	for _, line := range lines {
+		skipLine = false
+		for _, re := range config.Regexes {
+			match := re.regex.FindString(line)
+			if match == "" {
+				continue
+			}
+			if skipLine = isLineWhitelisted(line); skipLine {
+				break
+			}
+			leaks = addBlobLeak(leaks, line, match, re.description, blob)
+		}
+
+		if !skipLine && (opts.Entropy > 0 || len(config.Entropy.entropyRanges) != 0) {
+			words := strings.Fields(line)
+			for _, word := range words {
+				entropy := getShannonEntropy(word)
+				// Only check entropyRegexes and whiteListRegexes once per line, and only if an entropy leak type
+				// was found above, since regex checks are expensive.
+				if !entropyIsHighEnough(entropy) {
+					continue
+				}
+				// If either the line is whitelisted or the line fails the noiseReduction check (when enabled),
+				// then we can skip checking the rest of the line for high entropy words.
+				if skipLine = !highEntropyLineIsALeak(line) || isLineWhitelisted(line); skipLine {
+					break
+				}
+				leaks = addBlobLeak(leaks, line, word, fmt.Sprintf("Entropy: %.2f", entropy), blob)
+			}
+		}
+	}
+	return leaks
+
+}
+
 // inspect will parse each line of the git diff's content against a set of regexes or
 // a set of regexes set by the config (see gitleaks.toml for example). This function
 // will skip lines that include a whitelisted regex. A list of leaks is returned.
 // If verbose mode (-v/--verbose) is set, then checkDiff will log leaks as they are discovered.
-func inspect(commit commitInfo) []Leak {
+func (commit *commitInfo) inspect() []Leak {
 	var (
 		leaks    []Leak
 		skipLine bool
@@ -139,7 +186,28 @@ func isLineWhitelisted(line string) bool {
 }
 
 // addLeak is helper for func inspect() to append leaks if found during a diff check.
-func addLeak(leaks []Leak, line string, offender string, leakType string, commit commitInfo) []Leak {
+func addBlobLeak(leaks []Leak, line string, offender string, leakType string, blob *blobInfo) []Leak {
+	leak := Leak{
+		Line:     line,
+		Commit:   blob.hash,
+		Offender: offender,
+		Type:     leakType,
+	}
+	if opts.Redact {
+		leak.Offender = "REDACTED"
+		leak.Line = strings.Replace(line, offender, "REDACTED", -1)
+	}
+
+	if opts.Verbose {
+		leak.log()
+	}
+
+	leaks = append(leaks, leak)
+	return leaks
+}
+
+// addLeak is helper for func inspect() to append leaks if found during a diff check.
+func addLeak(leaks []Leak, line string, offender string, leakType string, commit *commitInfo) []Leak {
 	leak := Leak{
 		Line:     line,
 		Commit:   commit.sha,
