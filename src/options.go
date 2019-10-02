@@ -27,6 +27,8 @@ type Options struct {
 	GitLabUser string `long:"gitlab-user" description:"GitLab user ID to audit"`
 	GitLabOrg  string `long:"gitlab-org" description:"GitLab group ID to audit"`
 
+	AzdevOrg string `long:"azdev-org" description:"Azure DevOps organization to audit"`
+
 	CommitStop string `long:"commit-stop" description:"sha of commit to stop at"`
 	Commit     string `long:"commit" description:"sha of commit to audit"`
 	Depth      int64  `long:"depth" description:"maximum commit depth"`

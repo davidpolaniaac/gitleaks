@@ -1,10 +1,11 @@
 package gitleaks
 
 import (
-	log "github.com/sirupsen/logrus"
 	"io/ioutil"
 	"os"
 	"sync"
+
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -88,6 +89,8 @@ func Run(optsL *Options) (int, error) {
 			repo.report()
 			leaks = append(leaks, repo.leaks...)
 		}
+	} else if opts.AzdevOrg != "" {
+		return auditAzureDevOpsRepos()
 	} else if opts.GithubOrg != "" || opts.GithubUser != "" {
 		return auditGithubRepos()
 	} else if opts.GitLabOrg != "" || opts.GitLabUser != "" {

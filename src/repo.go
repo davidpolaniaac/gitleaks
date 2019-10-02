@@ -3,12 +3,14 @@ package gitleaks
 import (
 	"crypto/md5"
 	"fmt"
-	"github.com/hako/durafmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hako/durafmt"
 
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/src-d/go-git.v4"
@@ -33,7 +35,6 @@ type Commit struct {
 	email    string
 	date     time.Time
 }
-
 
 // Leak represents a leaked secret or regex match.
 type Leak struct {
@@ -115,6 +116,17 @@ func (repo *Repo) clone() error {
 		if err != nil {
 			log.Errorf("unable to open %s", repo.path)
 		}
+	} else if os.Getenv("AZURE_DEVOPS_TOKEN") != "" {
+		cloneTarget := fmt.Sprintf("%s/%x", dir, md5.Sum([]byte(fmt.Sprintf("%s%s", opts.GithubUser, opts.Repo))))
+		fmt.Println(cloneTarget)
+		auth := "https://" + "fakeUsername:" + os.Getenv("AZURE_DEVOPS_TOKEN") + "@"
+		repo := strings.Replace(opts.Repo, "https://", auth, 1)
+		cmdOutput, err := exec.Command("git", "clone", repo, cloneTarget).Output()
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("%s", cmdOutput)
+		repository, err = git.PlainOpen(cloneTarget)
 	} else {
 		// cloning to memory
 		log.Infof("cloning %s", opts.Repo)

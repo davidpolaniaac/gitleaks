@@ -2,14 +2,15 @@ module github.com/zricethezav/gitleaks
 
 require (
 	github.com/BurntSushi/toml v0.3.1
+	github.com/benmatselby/go-azuredevops v0.1.0
 	github.com/emirpasic/gods v1.12.0 // indirect
 	github.com/franela/goblin v0.0.0-20181003173013-ead4ad1d2727
 	github.com/google/go-github v15.0.0+incompatible
-	github.com/google/go-querystring v1.0.0 // indirect
 	github.com/hako/durafmt v0.0.0-20180520121703-7b7ae1e72ead
 	github.com/ipfs/go-ipfs v0.4.19 // indirect
 	github.com/jessevdk/go-flags v1.4.0
 	github.com/mattn/go-colorable v0.1.2
+	github.com/microsoft/azure-devops-go-api/azuredevops v0.0.0-20190912142452-3207b4a469d3
 	github.com/onsi/ginkgo v1.8.0 // indirect
 	github.com/onsi/gomega v1.5.0 // indirect
 	github.com/sirupsen/logrus v1.0.6
@@ -23,3 +24,5 @@ require (
 	gopkg.in/src-d/go-billy.v4 v4.3.0 // indirect
 	gopkg.in/src-d/go-git.v4 v4.9.1
 )
+
+go 1.13
